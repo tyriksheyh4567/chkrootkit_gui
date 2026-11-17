@@ -49,6 +49,6 @@ app.*.map.json
 
 # Presentation related
 presentation/*
-# !presentation/описание.docx
+!presentation/описание.docx
 .venv-tui/
 __pycache__/
