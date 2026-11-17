@@ -1,0 +1,28 @@
+name: chkrootkit_gui
+description: "chkrootkit GUI — Linux interface for local rootkit scanning tools."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dynamic_color: ^2.1.0
+  material_ui: ^1.10.0
+  sqlite3: ^2.9.4
+  crypto: ^3.0.8
+  cryptography: ^2.9.0
+  flutter_markdown_plus: ^1.0.12
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/docs/ru/
+    - assets/docs/en/

@@ -1,0 +1,98 @@
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version from pubspec.yaml and CHANGELOG.md (without v)'
+        required: true
+        default: '1.0.0'
+        type: string
+      publish:
+        description: 'Create a GitHub release after successful checks'
+        default: false
+        type: boolean
+      draft:
+        description: 'Create the release as a draft'
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate version and prepare release notes
+        run: python3 tools/release_notes.py "$RELEASE_VERSION"
+      - name: Install build and packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsqlite3-dev rpm libarchive-tools zstd python3-venv
+      - name: Install Flutter 3.47.1
+        run: |
+          git clone --branch 3.47.1 --depth 1 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Install appimagetool 1.9.1
+        run: |
+          curl -fL --retry 3 https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage -o "$RUNNER_TEMP/appimagetool"
+          echo 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool' > "$RUNNER_TEMP/appimagetool.sha256"
+          (cd "$RUNNER_TEMP" && sha256sum --check appimagetool.sha256)
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          echo "APPIMAGE_TOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
+      - name: Check source and tests
+        run: |
+          flutter pub get
+          dart format --output=none --set-exit-if-changed .
+          flutter analyze
+          flutter test
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          make .venv-tui/.ready
+          .venv-tui/bin/python -m unittest discover -s tests -p 'test_build_manager.py'
+      - name: Build all Linux packages
+        run: bash tools/build_backend.sh --target app --mode release --package all --jobs 2
+      - name: Checksums
+        working-directory: build/packages
+        run: sha256sum *.deb *.rpm *.AppImage *.pkg.tar.zst > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64-${{ inputs.version }}
+          path: |
+            build/packages/*
+            build/release-notes.md
+          if-no-files-found: error
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_DRAFT: ${{ inputs.draft }}
+      RELEASE_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64-${{ inputs.version }}
+          path: dist
+      - name: Publish release with changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes=$(find dist -name release-notes.md -print -quit)
+          mapfile -d '' files < <(find dist -type f ! -name release-notes.md -print0)
+          extra=()
+          if [[ "$RELEASE_DRAFT" == true ]]; then extra+=(--draft); fi
+          gh release create "v$RELEASE_VERSION" "${files[@]}" --target "$RELEASE_COMMIT" --title "chkrootkit GUI $RELEASE_VERSION" --notes-file "$notes" "${extra[@]}"
